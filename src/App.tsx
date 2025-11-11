@@ -139,6 +139,11 @@ const NOTE_CENTER_X = 150
 const getNoteY = (stepsFromTop: number) =>
   STAFF_TOP_PADDING + stepsFromTop * STAFF_LINE_SPACING
 
+const CLEF_POSITIONS: Record<Clef, { x: number; y: number }> = {
+  treble: { x: 64, y: getNoteY(3) },
+  bass: { x: 62, y: getNoteY(1) },
+}
+
 const parseNoteKey = (
   key: string,
 ): { clef: Clef; note: NoteDefinition } | null => {
@@ -166,7 +171,7 @@ function App() {
   const [stats, setStats] = useState({ total: 0, correct: 0 })
   const [mistakes, setMistakes] = useState<MistakeMap>({})
   const [isRevealing, setIsRevealing] = useState(false)
-  const [rangeLevel, setRangeLevel] = useState<(typeof RANGE_OPTIONS)[number]['value']>(0)
+  const [rangeLevel, setRangeLevel] = useState<(typeof RANGE_OPTIONS)[number]['value']>(1)
   const questionRef = useRef<Question | null>(null)
 
   useEffect(() => {
@@ -275,67 +280,66 @@ function App() {
     prepareQuestion('all')
   }, [prepareQuestion, rangeLevel])
 
-  const handleSelect = useCallback((index: number) => {
-    if (question && !isRevealing) {
-      setSelectedIndex(index)
-    }
-  }, [question, isRevealing])
-
-  const handleSubmit = useCallback(() => {
-    if (!question || selectedIndex === null || isRevealing) {
-      return
-    }
-    const selectedOption = question.options[selectedIndex]
-    const isCorrect = selectedOption.letter === question.note.letter
-
-    setStats((prev) => ({
-      total: prev.total + 1,
-      correct: prev.correct + (isCorrect ? 1 : 0),
-    }))
-
-    if (isCorrect) {
-      setFeedback({
-        type: 'correct',
-        message: `${selectedOption.letter} ✅`,
-      })
-      const key = getNoteKey(question.clef, question.note)
-      if (mistakes[key]?.count) {
-        setMistakes((prev) => {
-          const next = { ...prev }
-          const entry = next[key]
-          if (entry) {
-            const nextCount = entry.count - 1
-            if (nextCount <= 0) {
-              delete next[key]
-            } else {
-              next[key] = { ...entry, count: nextCount }
-            }
-          }
-          return next
-        })
+  const submitAnswer = useCallback(
+    (index: number) => {
+      if (!question || isRevealing) {
+        return
       }
-    } else {
-      const key = getNoteKey(question.clef, question.note)
-      setFeedback({
-        type: 'incorrect',
-        correctLetter: question.note.letter,
-        message: `正確答案是 ${question.note.letter}${question.note.octave}`,
-      })
-      setMistakes((prev) => ({
-        ...prev,
-        [key]: {
-          count: (prev[key]?.count ?? 0) + 1,
-          lastMissedAt: Date.now(),
-        },
+
+      setSelectedIndex(index)
+      setIsRevealing(true)
+
+      const selectedOption = question.options[index]
+      const isCorrect = selectedOption.letter === question.note.letter
+
+      setStats((prev) => ({
+        total: prev.total + 1,
+        correct: prev.correct + (isCorrect ? 1 : 0),
       }))
-    }
 
-    setIsRevealing(true)
+      if (isCorrect) {
+        setFeedback({
+          type: 'correct',
+          message: `${selectedOption.letter} ✅`,
+        })
+        const key = getNoteKey(question.clef, question.note)
+        if (mistakes[key]?.count) {
+          setMistakes((prev) => {
+            const next = { ...prev }
+            const entry = next[key]
+            if (entry) {
+              const nextCount = entry.count - 1
+              if (nextCount <= 0) {
+                delete next[key]
+              } else {
+                next[key] = { ...entry, count: nextCount }
+              }
+            }
+            return next
+          })
+        }
+      } else {
+        const key = getNoteKey(question.clef, question.note)
+        setFeedback({
+          type: 'incorrect',
+          correctLetter: question.note.letter,
+          message: `正確答案是 ${question.note.letter}${question.note.octave}`,
+        })
+        setMistakes((prev) => ({
+          ...prev,
+          [key]: {
+            count: (prev[key]?.count ?? 0) + 1,
+            lastMissedAt: Date.now(),
+          },
+        }))
+      }
 
-    setTimeout(() => {
-      prepareQuestion()
-    }, 900)
-  }, [isRevealing, mistakes, prepareQuestion, question, selectedIndex])
+      setTimeout(() => {
+        prepareQuestion()
+      }, 900)
+    },
+    [isRevealing, mistakes, prepareQuestion, question],
+  )
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -344,16 +348,13 @@ function App() {
       const optionIndex = KEY_BINDINGS.indexOf(key as (typeof KEY_BINDINGS)[number])
       if (optionIndex >= 0) {
         event.preventDefault()
-        handleSelect(optionIndex)
-      } else if (key === ' ') {
-        event.preventDefault()
-        handleSubmit()
+        submitAnswer(optionIndex)
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleSelect, handleSubmit, question])
+  }, [question, submitAnswer])
 
   const accuracy = stats.total
     ? Math.round((stats.correct / stats.total) * 100)
@@ -425,8 +426,16 @@ function App() {
       </section>
 
       {question && (
-        <main className="quiz-area">
-          <div className="staff-container">
+        <main className={`quiz-area${feedback ? ` ${feedback.type}` : ''}`}>
+          <div
+            className={`staff-container${
+              feedback?.type === 'incorrect'
+                ? ' tone-incorrect'
+                : feedback?.type === 'correct'
+                ? ' tone-correct'
+                : ''
+            }`}
+          >
             <svg
               viewBox="0 0 220 160"
               role="img"
@@ -439,8 +448,8 @@ function App() {
 
               <text
                 className={`clef clef-${question.clef}`}
-                x={66}
-                y={STAFF_TOP_PADDING + STAFF_LINE_SPACING * 2}
+                x={CLEF_POSITIONS[question.clef].x}
+                y={CLEF_POSITIONS[question.clef].y}
                 textAnchor="middle"
                 dominantBaseline="middle"
               >
@@ -453,9 +462,8 @@ function App() {
                 className="note-head"
                 cx={NOTE_CENTER_X}
                 cy={getNoteY(question.note.stepsFromTop)}
-                rx={9.5}
-                ry={6.5}
-                transform={`rotate(-15 ${NOTE_CENTER_X} ${getNoteY(question.note.stepsFromTop)})`}
+                rx={10}
+                ry={7}
               />
               {(() => {
                 const noteY = getNoteY(question.note.stepsFromTop)
@@ -483,14 +491,18 @@ function App() {
               const isCorrect = option.letter === question.note.letter
               const shouldHighlightCorrect =
                 isRevealing && feedback?.type === 'incorrect' && isCorrect
+              const isWrongSelection =
+                isRevealing && feedback?.type === 'incorrect' && isSelected && !isCorrect
 
               return (
                 <button
                   key={option.letter + index}
                   className={`answer-button${
                     isSelected ? ' selected' : ''
-                  }${shouldHighlightCorrect ? ' highlight' : ''}`}
-                  onClick={() => handleSelect(index)}
+                  }${shouldHighlightCorrect ? ' highlight' : ''}${
+                    isWrongSelection ? ' wrong' : ''
+                  }`}
+                  onClick={() => submitAnswer(index)}
                 >
                   <span className="key-hint">{keyHint}</span>
                   <span className="answer-label">{option.label}</span>
@@ -501,13 +513,12 @@ function App() {
 
           <div className="instructions">
             <p>
-              使用 <strong>Q / W / E / R</strong> 選擇答案，按下 <strong>空白鍵</strong>{' '}
-              提交並前往下一題。
+              使用 <strong>Q / W / E / R</strong> 選擇答案，系統會立即判定並切換下一題。
             </p>
           </div>
 
           {feedback && (
-            <div className={`feedback ${feedback.type}`}>
+            <div className={`feedback ${feedback.type}`} role="alert">
               <span>{feedback.message}</span>
             </div>
           )}
