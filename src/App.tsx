@@ -42,6 +42,27 @@ const randomItem = <T,>(items: readonly T[]): T =>
 const shuffle = <T,>(items: readonly T[]): T[] =>
   [...items].sort(() => Math.random() - 0.5)
 
+const NOTE_LETTER_TO_SEMITONE: Record<NoteLetter, number> = {
+  C: 0,
+  D: 2,
+  E: 4,
+  F: 5,
+  G: 7,
+  A: 9,
+  B: 11,
+}
+
+const getNoteMidi = (note: Pick<NoteDefinition, 'letter' | 'octave'>) =>
+  note.octave * 12 + NOTE_LETTER_TO_SEMITONE[note.letter]
+
+const MIDDLE_C_MIDI = getNoteMidi({ letter: 'C', octave: 4 })
+
+const RANGE_OPTIONS = [
+  { value: 0, label: '只限 C4' },
+  { value: 1, label: 'C3 - C5 (±1)' },
+  { value: 2, label: 'C2 - C6 (±2)' },
+] as const
+
 const buildOptionSet = (correct: NoteLetter): AnswerOption[] => {
   const incorrect = shuffle(
     NOTE_LETTERS.filter((letter) => letter !== correct),
@@ -84,10 +105,10 @@ const persistMistakes = (map: MistakeMap) => {
 const pickWeightedNote = (
   clef: Clef,
   mistakes: MistakeMap,
+  availableNotes: NoteDefinition[],
 ): NoteDefinition | null => {
-  const collection = NOTE_COLLECTIONS[clef]
   const weighted: { note: NoteDefinition; weight: number }[] = []
-  collection.forEach((note) => {
+  availableNotes.forEach((note) => {
     const key = getNoteKey(clef, note)
     const mistake = mistakes[key]
     if (mistake?.count) {
@@ -112,7 +133,26 @@ const pickWeightedNote = (
 
 const STAFF_LINE_SPACING = 16
 const STAFF_TOP_PADDING = 28
-const LEDGER_LENGTH = 60
+const LEDGER_LENGTH = 54
+const NOTE_CENTER_X = 150
+
+const getNoteY = (stepsFromTop: number) =>
+  STAFF_TOP_PADDING + stepsFromTop * STAFF_LINE_SPACING
+
+const parseNoteKey = (
+  key: string,
+): { clef: Clef; note: NoteDefinition } | null => {
+  const [clefPart, noteId] = key.split(':') as [Clef | undefined, string | undefined]
+  if (!clefPart || !noteId) {
+    return null
+  }
+  const clefNotes = NOTE_COLLECTIONS[clefPart]
+  const note = clefNotes?.find((entry) => entry.id === noteId)
+  if (!note) {
+    return null
+  }
+  return { clef: clefPart, note }
+}
 
 function App() {
   const [mode, setMode] = useState<'all' | 'mistakes'>('all')
@@ -126,6 +166,7 @@ function App() {
   const [stats, setStats] = useState({ total: 0, correct: 0 })
   const [mistakes, setMistakes] = useState<MistakeMap>({})
   const [isRevealing, setIsRevealing] = useState(false)
+  const [rangeLevel, setRangeLevel] = useState<(typeof RANGE_OPTIONS)[number]['value']>(0)
   const questionRef = useRef<Question | null>(null)
 
   useEffect(() => {
@@ -140,9 +181,33 @@ function App() {
     questionRef.current = question
   }, [question])
 
-  const availableMistakes = useMemo(() =>
-    Object.entries(mistakes).filter(([, entry]) => entry.count > 0),
-  [mistakes])
+  const rangeBounds = useMemo(() => {
+    const span = rangeLevel * 12
+    return {
+      min: MIDDLE_C_MIDI - span,
+      max: MIDDLE_C_MIDI + span,
+    }
+  }, [rangeLevel])
+
+  const isNoteWithinRange = useCallback(
+    (note: NoteDefinition) => {
+      const midi = getNoteMidi(note)
+      return midi >= rangeBounds.min && midi <= rangeBounds.max
+    },
+    [rangeBounds],
+  )
+
+  const availableMistakes = useMemo(
+    () =>
+      Object.entries(mistakes).filter(([key, entry]) => {
+        if (!entry.count) {
+          return false
+        }
+        const parsed = parseNoteKey(key)
+        return parsed ? isNoteWithinRange(parsed.note) : false
+      }),
+    [isNoteWithinRange, mistakes],
+  )
 
   const effectiveMode =
     mode === 'mistakes' && availableMistakes.length === 0 ? 'all' : mode
@@ -155,14 +220,19 @@ function App() {
 
       while (attempts < 6) {
         const clef = randomItem(['treble', 'bass'] as const)
+        const availableNotes = NOTE_COLLECTIONS[clef].filter(isNoteWithinRange)
+        if (!availableNotes.length) {
+          attempts += 1
+          continue
+        }
         let note: NoteDefinition | null = null
 
         if (nextMode === 'mistakes') {
-          note = pickWeightedNote(clef, mistakes)
+          note = pickWeightedNote(clef, mistakes, availableNotes)
         }
 
         if (!note) {
-          note = randomItem(NOTE_COLLECTIONS[clef])
+          note = randomItem(availableNotes)
         }
 
         const possible = buildQuestion(clef, note)
@@ -187,7 +257,7 @@ function App() {
         setIsRevealing(false)
       }
     },
-    [effectiveMode, mistakes],
+    [effectiveMode, isNoteWithinRange, mistakes],
   )
 
   useEffect(() => {
@@ -199,6 +269,11 @@ function App() {
       setMode('all')
     }
   }, [mode, availableMistakes])
+
+  useEffect(() => {
+    setMode('all')
+    prepareQuestion('all')
+  }, [prepareQuestion, rangeLevel])
 
   const handleSelect = useCallback((index: number) => {
     if (question && !isRevealing) {
@@ -324,6 +399,24 @@ function App() {
             )}
           </label>
         </div>
+        <div className="range-selector">
+          <label htmlFor="range-level">音域範圍</label>
+          <select
+            id="range-level"
+            value={rangeLevel}
+            onChange={(event) =>
+              setRangeLevel(
+                Number(event.target.value) as (typeof RANGE_OPTIONS)[number]['value'],
+              )
+            }
+          >
+            {RANGE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="stats">
           <span>總題數: {stats.total}</span>
           <span>答對: {stats.correct}</span>
@@ -344,7 +437,13 @@ function App() {
                 return <line key={index} x1={20} x2={200} y1={y} y2={y} />
               })}
 
-              <text className={`clef clef-${question.clef}`} x={42} y={100}>
+              <text
+                className={`clef clef-${question.clef}`}
+                x={66}
+                y={STAFF_TOP_PADDING + STAFF_LINE_SPACING * 2}
+                textAnchor="middle"
+                dominantBaseline="middle"
+              >
                 {CLEF_SYMBOLS[question.clef]}
               </text>
 
@@ -352,25 +451,28 @@ function App() {
 
               <ellipse
                 className="note-head"
-                cx={140}
-                cy={STAFF_TOP_PADDING + question.note.stepsFromTop * (STAFF_LINE_SPACING / 2)}
-                rx={12}
-                ry={8}
+                cx={NOTE_CENTER_X}
+                cy={getNoteY(question.note.stepsFromTop)}
+                rx={9.5}
+                ry={6.5}
+                transform={`rotate(-15 ${NOTE_CENTER_X} ${getNoteY(question.note.stepsFromTop)})`}
               />
-              <line
-                className="note-stem"
-                x1={148}
-                x2={148}
-                y1={
-                  STAFF_TOP_PADDING +
-                  question.note.stepsFromTop * (STAFF_LINE_SPACING / 2) -
-                  (question.note.stepsFromTop <= 4 ? 28 : -28)
-                }
-                y2={
-                  STAFF_TOP_PADDING +
-                  question.note.stepsFromTop * (STAFF_LINE_SPACING / 2)
-                }
-              />
+              {(() => {
+                const noteY = getNoteY(question.note.stepsFromTop)
+                const stemHeight = 42
+                const isStemDown = question.note.stepsFromTop <= 2
+                const stemX = NOTE_CENTER_X + (isStemDown ? -7 : 7)
+                const stemYEnd = isStemDown ? noteY - stemHeight : noteY + stemHeight
+                return (
+                  <line
+                    className="note-stem"
+                    x1={stemX}
+                    x2={stemX}
+                    y1={noteY}
+                    y2={stemYEnd}
+                  />
+                )
+              })()}
             </svg>
           </div>
 
@@ -423,14 +525,23 @@ const renderLedgerLines = (stepsFromTop: number) => {
     }
   }
   if (stepsFromTop > 4) {
-    for (let line = 5; line <= Math.ceil(stepsFromTop); line++) {
+    for (let line = 5; line <= Math.floor(stepsFromTop); line++) {
       lines.push(line)
     }
   }
 
   return lines.map((line, index) => {
-    const y = STAFF_TOP_PADDING + line * (STAFF_LINE_SPACING / 2)
-    return <line key={`ledger-${line}-${index}`} x1={120} x2={120 + LEDGER_LENGTH} y1={y} y2={y} />
+    const y = getNoteY(line)
+    const halfLength = LEDGER_LENGTH / 2
+    return (
+      <line
+        key={`ledger-${line}-${index}`}
+        x1={NOTE_CENTER_X - halfLength}
+        x2={NOTE_CENTER_X + halfLength}
+        y1={y}
+        y2={y}
+      />
+    )
   })
 }
 
