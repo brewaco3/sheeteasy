@@ -1,10 +1,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import packageJson from './package.json' assert { type: 'json' }
 
-const repositoryPath = process.env.VITE_APP_BASE_PATH
-const base = repositoryPath ? `/${repositoryPath.split('/').pop()}/` : '/'
+const getBasePath = () => {
+  const repositoryPath = process.env.VITE_APP_BASE_PATH ?? packageJson.name
+  const repositoryName = repositoryPath?.split('/').filter(Boolean).pop()
+  return repositoryName ? `/${repositoryName}/` : '/'
+}
 
-export default defineConfig({
-  base,
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? getBasePath() : '/',
   plugins: [react()],
-})
+}))
