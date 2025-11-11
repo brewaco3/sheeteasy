@@ -465,6 +465,22 @@ function App() {
                 rx={10}
                 ry={7}
               />
+              {(() => {
+                const noteY = getNoteY(question.note.stepsFromTop)
+                const stemHeight = 42
+                const isStemDown = question.note.stepsFromTop <= 2
+                const stemX = NOTE_CENTER_X + (isStemDown ? -7 : 7)
+                const stemYEnd = isStemDown ? noteY - stemHeight : noteY + stemHeight
+                return (
+                  <line
+                    className="note-stem"
+                    x1={stemX}
+                    x2={stemX}
+                    y1={noteY}
+                    y2={stemYEnd}
+                  />
+                )
+              })()}
             </svg>
           </div>
 
